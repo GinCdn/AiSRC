@@ -1,0 +1,52 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+
+/**
+ * 把仅在漏洞库/情报库统计页使用的 ECharts 运行时拆分为独立 chunk，
+ * 避免首屏脚本体积被图表库拖大。
+ */
+function splitChartChunks(id: string): string | undefined {
+  const moduleId = id.replaceAll('\\', '/')
+  if (moduleId.includes('/node_modules/zrender/lib/core/')) return 'echarts-renderer-core'
+  if (moduleId.includes('/node_modules/zrender/lib/canvas/')) return 'echarts-renderer-canvas'
+  if (moduleId.includes('/node_modules/zrender/lib/graphic/')) return 'echarts-renderer-graphic'
+  if (moduleId.includes('/node_modules/zrender/')) return 'echarts-renderer-runtime'
+  if (moduleId.includes('/node_modules/echarts/lib/chart/')) return 'echarts-charts'
+  if (moduleId.includes('/node_modules/echarts/lib/component/')) return 'echarts-components'
+  if (moduleId.includes('/node_modules/echarts/lib/coord/')) return 'echarts-coordinate'
+  if (moduleId.includes('/node_modules/echarts/lib/core/')) return 'echarts-core'
+  if (moduleId.includes('/node_modules/echarts/')) return 'echarts-runtime'
+  return undefined
+}
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, 'src')
+    }
+  },
+  server: {
+    port: 3000,
+    proxy: {
+      // 开发态把 /api 与 /health 代理到 Go 后端，WebSocket 一并走 ws 代理。
+      '/api': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+        ws: true
+      },
+      '/health': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true
+      }
+    }
+  },
+  build: {
+    rolldownOptions: {
+      output: {
+        manualChunks: splitChartChunks
+      }
+    }
+  }
+})

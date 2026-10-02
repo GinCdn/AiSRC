@@ -1,0 +1,25 @@
+# 编译产物
+/aisrc-server
+/aisrc-server.exe
+*.exe
+
+# 本地配置（含数据库口令与令牌密钥）
+/config.yaml
+
+# 运行时目录
+/logs/
+/work/
+/backups/
+/data/
+
+# 前端构建产物（由 AiSRC-React 的 npm run build 生成后拷贝至此）
+/web/dist/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
