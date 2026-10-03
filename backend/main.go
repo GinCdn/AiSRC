@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// 内嵌 IANA 时区库：Windows/裸容器无系统 zoneinfo 时 LoadLocation("Asia/Shanghai") 也能成功
+	_ "time/tzdata"
 
 	"AiSRC/config"
 	"AiSRC/core"
