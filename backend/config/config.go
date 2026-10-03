@@ -108,6 +108,7 @@ type UpdateConfig struct {
 	RepoRoot    string `yaml:"repo_root"`
 	Branch      string `yaml:"branch"`
 	ReleasesURL string `yaml:"releases_url"`
+	Token       string `yaml:"token"` // 私有仓库查询 Releases 需要令牌
 }
 
 var AppConfig Config
@@ -206,7 +207,7 @@ func applyDefaults() {
 		AppConfig.Update.Branch = "main"
 	}
 	if AppConfig.Update.ReleasesURL == "" {
-		AppConfig.Update.ReleasesURL = "https://github.com/StanleyNull/AutoHunter"
+		AppConfig.Update.ReleasesURL = "https://github.com/GinCdn/AiSRC"
 	}
 }
 

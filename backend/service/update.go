@@ -65,6 +65,9 @@ func CheckUpdate(ctx context.Context) *UpdateCheckResult {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "AiSRC/"+constant.Version)
+	if token := strings.TrimSpace(config.AppConfig.Update.Token); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := updateHTTPClient.Do(req)
 	if err != nil {
