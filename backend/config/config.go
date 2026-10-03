@@ -207,7 +207,7 @@ func applyDefaults() {
 		AppConfig.Update.Branch = "main"
 	}
 	if AppConfig.Update.ReleasesURL == "" {
-		AppConfig.Update.ReleasesURL = "https://github.com/GinCdn/AiSRC"
+		AppConfig.Update.ReleasesURL = "https://github.com/GinCdn/AutoAiSRC"
 	}
 }
 
