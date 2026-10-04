@@ -96,7 +96,27 @@ func AnalyzeEngineResults(ctx context.Context, task *model.Task, pool *llm.Pool,
 	}
 	chatCtx, cancel := context.WithTimeout(ctx, collectorAnalyzeTimeout)
 	defer cancel()
-	chatResult, err := chatAndRecord(chatCtx, pool, req, "")
+	// 中转站瞬时 5xx（524 等）常见：限 3 次尝试、短退避重试，
+	// 不改用 chatAndRecordWait 的 5 分钟长等待（本调用在 Refill 同步路径上，避免阻塞补位循环）。
+	var chatResult *llm.ChatResult
+	var chatErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		chatResult, chatErr = chatAndRecord(chatCtx, pool, req, "")
+		if chatErr == nil || ctx.Err() != nil || !llm.IsTransientError(chatErr) || attempt == 3 {
+			break
+		}
+		EmitWarn(task.ID, "collector", "collector_analysis",
+			fmt.Sprintf("模型端点瞬时错误（%s），10 秒后重试（第 %d/3 次）",
+				utils.Truncate(utils.SanitizeSecretText(chatErr.Error()), 120), attempt+1),
+			map[string]any{"engine": engineName, "attempt": attempt})
+		select {
+		case <-chatCtx.Done():
+		case <-time.After(10 * time.Second):
+		}
+	}
+	if chatErr != nil {
+		err = chatErr
+	}
 	if err != nil {
 		EmitWarn(task.ID, "collector", "collector_analysis",
 			"测绘结果大模型分析失败："+utils.SanitizeSecretText(err.Error()),

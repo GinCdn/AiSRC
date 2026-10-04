@@ -114,6 +114,36 @@ func buildModelConfigView(task *model.Task) map[string]any {
 		})
 	}
 	view["providers"] = providers
+	// 跟随系统任务：运行时用 BuildGlobalPool（系统端点池优先，其次单端点），
+	// 这里按同一解析顺序下发 model_display，列表/看板「模型」列不再显示「未配置模型」。
+	if cfg.IsInherit() {
+		settings := engine.LoadSystemSettings()
+		names := make([]string, 0, len(settings.LLM.Providers))
+		seenModel := map[string]bool{}
+		enabled := 0
+		for _, p := range settings.LLM.Providers {
+			if !p.Enabled {
+				continue
+			}
+			enabled++
+			name := strings.TrimSpace(p.Model)
+			if name == "" || seenModel[name] {
+				continue
+			}
+			seenModel[name] = true
+			names = append(names, name)
+		}
+		switch {
+		case len(names) > 0:
+			view["model_display"] = "跟随系统 · " + strings.Join(names, " / ")
+		case strings.TrimSpace(settings.LLM.Model) != "":
+			view["model_display"] = "跟随系统 · " + strings.TrimSpace(settings.LLM.Model)
+		case enabled > 0:
+			view["model_display"] = fmt.Sprintf("跟随系统 · 端点池 %d 个端点", enabled)
+		default:
+			view["model_display"] = "跟随系统"
+		}
+	}
 	// 端点池模式没有单一 model 字段，列表/看板「模型」列会显示成「未配置模型」。
 	// 下发 model_display：启用端点的去重模型名（逗号连接）；都没有则报端点数。
 	if strings.TrimSpace(cfg.Model) == "" && len(cfg.Providers) > 0 {
