@@ -227,6 +227,7 @@ func registerUpdateRoutes(g *gin.RouterGroup) {
 	update := g.Group("/api/update")
 	{
 		update.GET("/check", api.CheckUpdateHandler)
+		update.GET("/status", api.UpdateStatusHandler)
 		update.POST("/run", api.RunUpdateHandler)
 	}
 }

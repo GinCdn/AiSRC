@@ -836,3 +836,9 @@ func RunUpdateHandler(c *gin.Context) {
 	}
 	result.Success(c, service.RunUpdate())
 }
+
+// UpdateStatusHandler 更新进度（前端轮询）。
+// GET /api/update/status
+func UpdateStatusHandler(c *gin.Context) {
+	result.Success(c, service.GetUpdateStatus())
+}

@@ -19,6 +19,7 @@ import (
 	"AiSRC/global"
 	"AiSRC/model"
 	"AiSRC/router"
+	"AiSRC/service"
 	"AiSRC/service/engine"
 
 	"github.com/gin-gonic/gin"
@@ -120,6 +121,18 @@ func main() {
 			global.Log.Fatalf("[boot] HTTP 服务异常退出：%v", err)
 		}
 	}()
+
+	// 7.1 在线更新的自重启钩子：与第 8 步的信号退出同一套优雅停机顺序
+	//（先停调度器回写任务状态，再关 HTTP 释放端口），供 service.update 调用。
+	service.RegisterShutdownHook(func() {
+		global.Log.Info("[update] 在线更新重启：开始优雅停机…")
+		engine.ManagerInstance().Shutdown()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			global.Log.Warnf("[update] HTTP 服务关闭超时：%v", err)
+		}
+	})
 
 	// 8. 优雅退出：先停调度器（回写任务状态），再关 HTTP。
 	quit := make(chan os.Signal, 1)

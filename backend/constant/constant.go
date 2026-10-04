@@ -5,8 +5,8 @@ const (
 	// ContextKeyUserObj 鉴权后写入 gin.Context 的身份对象。
 	ContextKeyUserObj = "authedUserObj"
 
-	// Version 全局系统版本号。
-	Version = "1.0.1"
+	// Version 全局系统版本号。用 var 而非 const，以便构建时可用 -ldflags -X 覆盖（如更新功能自测）。
+	Version = "1.0.2"
 
 	// AppName 应用名。
 	AppName = "AiSRC"

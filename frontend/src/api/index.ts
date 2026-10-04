@@ -262,6 +262,12 @@ export const userApi = {
 
   // ---------------- 在线更新
   checkUpdate: () => request<UpdateCheck>({ url: '/api/update/check', method: 'GET', silent: true }),
+  updateStatus: () =>
+    request<{ state: string; message?: string; target_version?: string; error?: string }>({
+      url: '/api/update/status',
+      method: 'GET',
+      silent: true
+    }),
   runUpdate: () => request<OkResult>({ url: '/api/update/run', method: 'POST' })
 }
 

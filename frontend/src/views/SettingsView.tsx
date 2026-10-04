@@ -713,6 +713,7 @@ export default function SettingsView() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfoExt | null>(null)
   const [updateError, setUpdateError] = useState('')
   const [updateRunning, setUpdateRunning] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState('')
   const [updateSupported, setUpdateSupported] = useState(true)
 
   // ---- 外观
@@ -726,6 +727,7 @@ export default function SettingsView() {
   const pendingRef = useRef(false)
   const baselineRef = useRef<Record<SegKey, string>>({ ...EMPTY_BASELINE })
   const pollRef = useRef<number | null>(null)
+  const updateStatusPollRef = useRef<number | null>(null)
   const restoreFileRef = useRef<HTMLInputElement | null>(null)
   const wallpaperInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -1398,6 +1400,7 @@ export default function SettingsView() {
   async function checkUpdate() {
     setUpdateChecking(true)
     setUpdateError('')
+    setUpdateProgress('')
     setUpdateInfo(null)
     try {
       const res = (await userApi.checkUpdate()) as unknown as UpdateInfoExt
@@ -1415,16 +1418,17 @@ export default function SettingsView() {
   function runUpdate() {
     modal.confirm({
       title: '确认更新？',
-      content: '服务会自动重启，进行中的任务会优雅暂停。',
+      content: '服务会自动下载新版本并重启，进行中的任务会优雅暂停。',
       okText: '更新',
       cancelText: '取消',
       onOk: async () => {
         setUpdateRunning(true)
         setUpdateError('')
+        setUpdateProgress('')
         try {
           const r = (await userApi.runUpdate()) as unknown as { ok?: boolean; error?: string; command?: string }
           if (r?.ok) {
-            startRestart('update')
+            pollUpdateStatus()
           } else {
             setUpdateError(r?.error || '更新失败')
             if (r?.command) {
@@ -1438,6 +1442,36 @@ export default function SettingsView() {
         }
       }
     })
+  }
+
+  /** 轮询更新进度：downloading/swapping → 继续等；restarting → 交回重启检测；failed → 报错。 */
+  function pollUpdateStatus() {
+    if (updateStatusPollRef.current) window.clearInterval(updateStatusPollRef.current)
+    let attempts = 0
+    updateStatusPollRef.current = window.setInterval(async () => {
+      attempts += 1
+      try {
+        const s = await userApi.updateStatus()
+        if (s?.state === 'restarting') {
+          if (updateStatusPollRef.current) window.clearInterval(updateStatusPollRef.current)
+          updateStatusPollRef.current = null
+          startRestart('update')
+        } else if (s?.state === 'failed') {
+          if (updateStatusPollRef.current) window.clearInterval(updateStatusPollRef.current)
+          updateStatusPollRef.current = null
+          setUpdateError(s.error || s.message || '更新失败')
+        } else if (s?.state === 'downloading' || s?.state === 'swapping') {
+          setUpdateProgress(s.message || '更新进行中…')
+        }
+      } catch {
+        /* 状态接口暂不可达，继续轮询 */
+      }
+      if (attempts > 150) {
+        if (updateStatusPollRef.current) window.clearInterval(updateStatusPollRef.current)
+        updateStatusPollRef.current = null
+        setUpdateError('更新超时，请检查网络后重试')
+      }
+    }, 2000)
   }
 
   // ------------------------------------------------------------ 外观
@@ -2784,6 +2818,8 @@ function renderAppearance(): ReactNode {
               {updateChecking ? '检测中…' : '检查更新'}
             </Button>
 
+            {updateProgress ? <Alert type="info" showIcon message={updateProgress} /> : null}
+
             {updateError ? <Alert type="error" showIcon message={updateError} /> : null}
 
             {updateInfo?.error ? (
@@ -2841,7 +2877,7 @@ function renderAppearance(): ReactNode {
                     <Button type="primary" loading={updateRunning} disabled={ro} onClick={runUpdate}>
                       {updateRunning ? '更新中…' : '一键更新并重启'}
                     </Button>
-                    <Typography.Text type="secondary">仅后端代码变更，可热更新（git pull + 自动重启）</Typography.Text>
+                    <Typography.Text type="secondary">自动下载对应平台安装包，替换程序与前端后自动重启（config.yaml 与数据目录保持不变）</Typography.Text>
                   </Space>
                 ) : (
                   <div>
