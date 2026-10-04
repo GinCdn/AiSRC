@@ -1,7 +1,7 @@
 package constant
 
 // Version 全局系统版本号。用 var 而非 const，以便构建时可用 -ldflags -X 覆盖（如更新功能自测）。
-var Version = "1.0.4"
+var Version = "1.0.5"
 
 // 上下文与通用常量。
 const (

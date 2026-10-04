@@ -369,6 +369,84 @@ function errText(e: unknown): string {
   return msg.replace(/^\d+\s*/, '')
 }
 
+/** 更新说明行内轻量渲染：**加粗** 与 `行内码`（不引第三方 markdown 依赖）。 */
+function renderInlineMd(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = []
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g
+  let last = 0
+  let idx = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    if (m[1] !== undefined) {
+      parts.push(<strong key={`${keyPrefix}-b${idx}`}>{m[1]}</strong>)
+    } else {
+      parts.push(
+        <code key={`${keyPrefix}-c${idx}`} style={{ fontSize: '0.92em' }}>
+          {m[2]}
+        </code>
+      )
+    }
+    last = m.index + m[0].length
+    idx++
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
+/** 更新说明块级轻量渲染：##/### 标题、- 列表、> 提示、空行分段。 */
+function UpdateChangelog({ text }: { text: string }) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  const blocks: ReactNode[] = []
+  let list: ReactNode[] = []
+  const flushList = () => {
+    if (list.length) {
+      blocks.push(
+        <ul key={`ul-${blocks.length}`} style={{ margin: '2px 0', paddingInlineStart: 20 }}>
+          {list}
+        </ul>
+      )
+      list = []
+    }
+  }
+  lines.forEach((raw, idx) => {
+    const line = raw.trimEnd()
+    if (/^###\s+/.test(line)) {
+      flushList()
+      blocks.push(
+        <div key={idx} style={{ fontWeight: 600, marginTop: 6 }}>
+          {renderInlineMd(line.replace(/^###\s+/, ''), `h3-${idx}`)}
+        </div>
+      )
+    } else if (/^##\s+/.test(line)) {
+      flushList()
+      blocks.push(
+        <div key={idx} style={{ fontWeight: 600, fontSize: 15, marginTop: 8 }}>
+          {renderInlineMd(line.replace(/^##\s+/, ''), `h2-${idx}`)}
+        </div>
+      )
+    } else if (/^[-*]\s+/.test(line)) {
+      list.push(<li key={idx}>{renderInlineMd(line.replace(/^[-*]\s+/, ''), `li-${idx}`)}</li>)
+    } else if (/^>\s?/.test(line)) {
+      flushList()
+      blocks.push(
+        <Typography.Text key={idx} type="secondary" style={{ display: 'block', marginTop: 2 }}>
+          {renderInlineMd(line.replace(/^>\s?/, ''), `q-${idx}`)}
+        </Typography.Text>
+      )
+    } else if (line.trim() === '') {
+      flushList()
+    } else {
+      flushList()
+      blocks.push(<div key={idx}>{renderInlineMd(line, `p-${idx}`)}</div>)
+    }
+  })
+  flushList()
+  return (
+    <div style={{ maxHeight: 280, overflow: 'auto', width: '100%', lineHeight: 1.7 }}>{blocks}</div>
+  )
+}
+
 /** 协议收敛到合法值。 */
 function normalizeProtocol(protocol?: string): string {
   return protocol === 'openai_chat' || protocol === 'anthropic_messages' || protocol === 'auto'
@@ -2853,9 +2931,7 @@ function renderAppearance(): ReactNode {
                   ) : null}
                 </Space>
                 {updateInfo?.latest_message || updateInfo?.changelog ? (
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    {updateInfo.latest_message || updateInfo.changelog}
-                  </Typography.Paragraph>
+                  <UpdateChangelog text={updateInfo.latest_message || updateInfo.changelog} />
                 ) : null}
                 {updateInfo?.changed_files?.length ? (
                   <details>
