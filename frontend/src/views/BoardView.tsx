@@ -1517,6 +1517,31 @@ export default function BoardView() {
     })
   }
 
+  function rescanTarget(t: Target) {
+    if (!writable) return
+    const needsConfirm = t.status === 'skipped' || t.status === 'dead'
+    const run = async () => {
+      try {
+        await userApi.rescanTarget(taskId, t.id)
+        message.success(`已重新排队 ${mask(t.host)}`)
+        await loadBoard()
+      } catch (e) {
+        message.error(`重扫失败：${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    if (!needsConfirm) {
+      void run()
+      return
+    }
+    modal.confirm({
+      title: `重新扫描「${mask(t.host || t.id)}」？`,
+      content: '该目标此前已停止挖掘（已跳过或失败）。重扫将清除失败原因并重新排队，按当前任务参数重新挖掘。已挖到的漏洞不受影响。',
+      okText: '重新扫描',
+      cancelText: '取消',
+      onOk: run
+    })
+  }
+
   function openDirective(id: string, host: string) {
     if (!writable) return
     setDirectiveTarget({ id, host })
@@ -2543,6 +2568,16 @@ export default function BoardView() {
                                 <Button size="small" onClick={() => openDirective(t.id, t.host)}>
                                   注入指令
                                 </Button>
+                                {TARGET_CLOSED_STATUS.has(t.status) ? (
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    ghost
+                                    onClick={() => rescanTarget(t)}
+                                  >
+                                    重扫
+                                  </Button>
+                                ) : null}
                                 <Button size="small" danger onClick={() => skipTarget(t)}>
                                   跳过
                                 </Button>

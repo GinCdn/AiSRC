@@ -111,6 +111,7 @@ func registerTaskRoutes(g *gin.RouterGroup) {
 		tasks.GET("/:task_id/targets", api.TaskTargets)
 		tasks.GET("/:task_id/hosts", api.TaskHosts)
 		tasks.POST("/:task_id/targets/:target_id/skip", api.SkipTarget)
+		tasks.POST("/:task_id/targets/:target_id/rescan", api.RescanTarget)
 		tasks.POST("/:task_id/targets/:target_id/directive", api.InjectDirective)
 		tasks.GET("/:task_id/targets/:target_id/trace", api.TargetTrace)
 		tasks.POST("/:task_id/escalations/:finding_id/cancel", api.CancelEscalation)

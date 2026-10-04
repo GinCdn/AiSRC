@@ -133,6 +133,11 @@ export const userApi = {
       method: 'POST',
       data: { reason }
     }),
+  rescanTarget: (taskId: string, targetId: string) =>
+    request<OkResult>({
+      url: `/api/tasks/${taskId}/targets/${targetId}/rescan`,
+      method: 'POST'
+    }),
   injectDirective: (taskId: string, targetId: string, directive: string) =>
     request<OkResult>({
       url: `/api/tasks/${taskId}/targets/${targetId}/directive`,

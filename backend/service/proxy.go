@@ -184,8 +184,37 @@ func ImportProxies(raw string, replace bool) (map[string]any, error) {
 }
 
 // parseProxyLine 解析单行代理配置。
+// 支持三种格式：protocol://user:pass@host:port、host:port、竖线分隔 协议|host|port|用户|密码（协议/凭据段可省略）。
 func parseProxyLine(line string) (model.ProxyItem, error) {
 	item := model.ProxyItem{ID: utils.UUID(), Protocol: "http", Enabled: true}
+	// 竖线分隔格式（不含 ://，避免与 URL 形态混淆）
+	if strings.Contains(line, "|") && !strings.Contains(line, "://") {
+		parts := strings.Split(line, "|")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		if isProxyScheme(parts[0]) {
+			item.Protocol = normalizeProxyProtocol(parts[0])
+			parts = parts[1:]
+		}
+		if len(parts) < 2 {
+			return item, fmt.Errorf("格式不正确: %s", line)
+		}
+		item.Host = parts[0]
+		port := atoi(parts[1])
+		if item.Host == "" || port <= 0 {
+			return item, fmt.Errorf("缺少主机或端口: %s", line)
+		}
+		item.Port = port
+		if len(parts) >= 3 {
+			item.Username = parts[2]
+		}
+		if len(parts) >= 4 {
+			item.Password = parts[3]
+		}
+		item.Name = item.Host + ":" + parts[1]
+		return item, nil
+	}
 	target := line
 	if strings.Contains(target, "://") {
 		parsed, err := url.Parse(target)
@@ -333,6 +362,15 @@ func normalizeProxyProtocol(value string) string {
 	default:
 		return "http"
 	}
+}
+
+// isProxyScheme 判断竖线格式首段是否为协议名。
+func isProxyScheme(value string) bool {
+	switch strings.ToLower(value) {
+	case "http", "https", "socks", "socks5":
+		return true
+	}
+	return false
 }
 
 func itoa(v int) string {

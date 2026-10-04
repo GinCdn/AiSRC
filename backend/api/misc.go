@@ -361,24 +361,48 @@ func ToggleProxyPool(c *gin.Context) {
 
 // ImportProxies 批量导入代理。
 // POST /api/proxy/import
+// 兼容两种请求：multipart/form-data（字段 text / file，前端「导入 txt / 粘贴」）与 JSON（raw / content）。
 func ImportProxies(c *gin.Context) {
 	if requireWrite(c) {
 		return
 	}
-	var dto ProxyImportRequest
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		result.Failed(c, result.BadRequest, result.SubInvalidFormat)
-		return
-	}
-	raw := dto.Raw
-	if strings.TrimSpace(raw) == "" {
-		raw = dto.Content
+	raw := ""
+	replace := false
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
+		raw = c.PostForm("text")
+		if strings.TrimSpace(raw) == "" {
+			raw = c.PostForm("raw")
+		}
+		if strings.TrimSpace(raw) == "" {
+			raw = c.PostForm("content")
+		}
+		if strings.TrimSpace(raw) == "" {
+			if fileHeader, err := c.FormFile("file"); err == nil {
+				if f, err := fileHeader.Open(); err == nil {
+					data, _ := io.ReadAll(io.LimitReader(f, 4<<20))
+					_ = f.Close()
+					raw = string(data)
+				}
+			}
+		}
+		replace = c.PostForm("replace") == "true" || c.PostForm("replace") == "1"
+	} else {
+		var dto ProxyImportRequest
+		if err := c.ShouldBindJSON(&dto); err != nil {
+			result.Failed(c, result.BadRequest, result.SubInvalidFormat)
+			return
+		}
+		raw = dto.Raw
+		if strings.TrimSpace(raw) == "" {
+			raw = dto.Content
+		}
+		replace = dto.Replace
 	}
 	if strings.TrimSpace(raw) == "" {
 		result.Failed(c, result.BadRequest, result.SubMissingParam)
 		return
 	}
-	view, err := service.ImportProxies(raw, dto.Replace)
+	view, err := service.ImportProxies(raw, replace)
 	if err != nil {
 		result.FailedWithMsg(c, result.BadRequest, err.Error())
 		return

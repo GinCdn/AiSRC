@@ -28,7 +28,7 @@ func BackupStatus() map[string]any {
 	for _, item := range snapshots {
 		totalBytes += item.Size
 	}
-	return map[string]any{
+	view := map[string]any{
 		"dir":            dir,
 		"count":          len(snapshots),
 		"total_bytes":    totalBytes,
@@ -38,13 +38,53 @@ func BackupStatus() map[string]any {
 		"latest":         latestSnapshotName(snapshots),
 		"snapshots":      snapshots,
 	}
+	if len(snapshots) > 0 {
+		view["last_backup_at"] = snapshots[0].ModTime
+	} else {
+		view["last_backup_at"] = ""
+	}
+	view["snapshots_human"] = utils.HumanBytes(totalBytes)
+	view["db_human"] = databaseSizeHuman()
+	if free, total, err := DiskFree(dir); err == nil {
+		view["disk"] = map[string]any{
+			"free_bytes":  free,
+			"total_bytes": total,
+			"free_human":  utils.HumanBytes(free),
+			"total_human": utils.HumanBytes(total),
+		}
+	}
+	workStats := WorkdirStats()
+	workLimit := config.AppConfig.Data.WorkMaxBytes
+	view["work"] = map[string]any{
+		"human":     workStats["total_size_human"],
+		"bytes":     workStats["total_bytes"],
+		"max_human": utils.HumanBytes(workLimit),
+	}
+	return view
+}
+
+// databaseSizeHuman 当前数据库所有表的总大小（MySQL information_schema）。
+func databaseSizeHuman() string {
+	if core.Db == nil {
+		return ""
+	}
+	var total int64
+	if err := core.Db.Raw(
+		"SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = DATABASE()",
+	).Scan(&total).Error; err != nil || total <= 0 {
+		return ""
+	}
+	return utils.HumanBytes(total)
 }
 
 // SnapshotInfo 备份文件信息。
 type SnapshotInfo struct {
-	Name    string `json:"name"`
-	Size    int64  `json:"size"`
-	ModTime string `json:"mod_time"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	ModTime   string `json:"mod_time"`
+	Bytes     int64  `json:"bytes"`      // Size 别名（前端读 bytes）
+	Human     string `json:"human"`      // 可读大小
+	CreatedAt string `json:"created_at"` // ModTime 别名（前端读 created_at）
 }
 
 func listSnapshots(dir string) []SnapshotInfo {
@@ -61,10 +101,15 @@ func listSnapshots(dir string) []SnapshotInfo {
 		if err != nil {
 			continue
 		}
+		modTime := utils.ToCSTISO(info.ModTime())
+		size := info.Size()
 		out = append(out, SnapshotInfo{
-			Name:    entry.Name(),
-			Size:    info.Size(),
-			ModTime: utils.ToCSTISO(info.ModTime()),
+			Name:      entry.Name(),
+			Size:      size,
+			ModTime:   modTime,
+			Bytes:     size,
+			Human:     utils.HumanBytes(size),
+			CreatedAt: modTime,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ModTime > out[j].ModTime })

@@ -87,12 +87,16 @@ const EMPTY_DRAFT: EditDraft = {
   note: ''
 }
 
-/** 从接口返回里读出列表与开关（兼容裸数组与 { enabled, proxies } 两种形态）。 */
+/** 从接口返回里读出列表与开关（兼容裸数组、{ enabled, proxies } 与 /api/proxy 的 { enabled, items } 三种形态）。 */
 function readList(res: unknown): { enabled: boolean | null; items: ProxyItem[] } {
   if (Array.isArray(res)) return { enabled: null, items: res as ProxyItem[] }
   if (res && typeof res === 'object') {
-    const obj = res as { enabled?: unknown; proxies?: unknown }
-    const items = Array.isArray(obj.proxies) ? (obj.proxies as ProxyItem[]) : []
+    const obj = res as { enabled?: unknown; proxies?: unknown; items?: unknown }
+    const items = Array.isArray(obj.proxies)
+      ? (obj.proxies as ProxyItem[])
+      : Array.isArray(obj.items)
+        ? (obj.items as ProxyItem[])
+        : []
     return { enabled: typeof obj.enabled === 'boolean' ? obj.enabled : null, items }
   }
   return { enabled: null, items: [] }

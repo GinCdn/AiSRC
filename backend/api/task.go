@@ -425,6 +425,23 @@ func SkipTarget(c *gin.Context) {
 	result.Success(c, outcome)
 }
 
+// RescanTarget 重新扫描终态目标（已完成/已跳过/已放弃 → 重新排队）。
+// POST /api/tasks/:task_id/targets/:target_id/rescan
+func RescanTarget(c *gin.Context) {
+	if requireWrite(c) {
+		return
+	}
+	taskID := pathParam(c, "task_id")
+	targetID := pathParam(c, "target_id")
+	outcome := engine.ManagerInstance().RescanTarget(taskID, targetID)
+	if ok, _ := outcome["ok"].(bool); !ok {
+		reason, _ := outcome["reason"].(string)
+		result.FailedWithMsg(c, result.BadRequest, reason)
+		return
+	}
+	result.Success(c, outcome)
+}
+
 // InjectDirective 向运行中 worker 注入人工指令。
 // POST /api/tasks/:task_id/targets/:target_id/directive
 func InjectDirective(c *gin.Context) {

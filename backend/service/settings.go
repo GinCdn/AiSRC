@@ -587,9 +587,15 @@ func ResolveEngineConfig(engineName string) (string, string) {
 	return "", engine.DefaultEngineBaseURL(name)
 }
 
+// normalizeBaseURL 端点地址归一（去尾部单个斜杠），用于 key_ref/密钥复用匹配。
+func normalizeBaseURL(u string) string {
+	return strings.TrimSuffix(strings.TrimSpace(u), "/")
+}
+
 // ResolveLLMEndpoint 把用户传入的端点信息解析为实际可用的 base_url 与
 // 明文 API Key：入参为空或脱敏串时回落到已保存配置（key_ref 命中端点池时
-// 用对应条目）。ListAvailableModels / LLMBalance 共用。
+// 用对应条目；单端点 key_ref 为 IdentityRef(base_url)，按 base_url 指纹
+// 兜底命中同地址池条目）。ListAvailableModels / LLMBalance 共用。
 func ResolveLLMEndpoint(baseURL, apiKey, keyRef string) (string, string) {
 	settings := engine.LoadSystemSettings()
 	if strings.TrimSpace(baseURL) == "" {
@@ -597,13 +603,25 @@ func ResolveLLMEndpoint(baseURL, apiKey, keyRef string) (string, string) {
 	}
 	if strings.TrimSpace(apiKey) == "" || utils.IsMaskedSecret(apiKey) {
 		apiKey = settings.LLM.APIKey
+		probe := normalizeBaseURL(baseURL)
 		if keyRef != "" {
 			for _, provider := range settings.LLM.Providers {
-				if utils.IdentityRef(provider.BaseURL, provider.Name) == keyRef {
+				providerURL := normalizeBaseURL(provider.BaseURL)
+				// 池条目引用（IdentityRef(base_url, name)）与单端点引用（IdentityRef(base_url)）都能命中
+				if utils.IdentityRef(provider.BaseURL, provider.Name) == keyRef || utils.IdentityRef(providerURL) == keyRef {
 					apiKey = provider.APIKey
 					if baseURL == "" {
 						baseURL = provider.BaseURL
 					}
+					break
+				}
+			}
+		}
+		// 仍无密钥时按 base_url 指纹复用端点池中同地址条目的密钥
+		if (strings.TrimSpace(apiKey) == "" || utils.IsMaskedSecret(apiKey)) && probe != "" {
+			for _, provider := range settings.LLM.Providers {
+				if normalizeBaseURL(provider.BaseURL) == probe && strings.TrimSpace(provider.APIKey) != "" {
+					apiKey = provider.APIKey
 					break
 				}
 			}
@@ -863,12 +881,22 @@ func WorkdirStats() map[string]any {
 	root := config.WorkRootDir()
 	var total int64
 	files := 0
+	dirs := 0
+	var oldestName string
+	var oldestTime time.Time
 	if entries, err := os.ReadDir(root); err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
+			dirs++
 			dirPath := filepath.Join(root, entry.Name())
+			if info, err := entry.Info(); err == nil {
+				if oldestTime.IsZero() || info.ModTime().Before(oldestTime) {
+					oldestTime = info.ModTime()
+					oldestName = entry.Name()
+				}
+			}
 			_ = filepath.Walk(dirPath, func(_ string, info os.FileInfo, err error) error {
 				if err != nil || info == nil || info.IsDir() {
 					return nil
@@ -884,14 +912,26 @@ func WorkdirStats() map[string]any {
 	if limit > 0 {
 		usage = float64(total) / float64(limit) * 100
 	}
-	return map[string]any{
-		"path":          root,
-		"bytes":         total,
-		"files":         files,
-		"limit_bytes":   limit,
-		"usage_percent": usage,
-		"overflowed":    limit > 0 && total >= limit,
+	view := map[string]any{
+		"path":             root,
+		"root":             root,
+		"bytes":            total,
+		"total_bytes":      total,
+		"total_size_human": utils.HumanBytes(total),
+		"files":            files,
+		"total_files":      files,
+		"total_dirs":       dirs,
+		"limit_bytes":      limit,
+		"usage_percent":    usage,
+		"overflowed":       limit > 0 && total >= limit,
 	}
+	if !oldestTime.IsZero() {
+		view["oldest_dir"] = map[string]any{
+			"name":     oldestName,
+			"age_days": int(time.Since(oldestTime).Hours() / 24),
+		}
+	}
+	return view
 }
 
 // CleanupWorkdir 清理工作目录中的过期任务目录。
@@ -910,34 +950,57 @@ func CleanupWorkdir() map[string]any {
 	}
 
 	removed := make([]string, 0, 16)
+	removedDetails := make([]map[string]any, 0, 16)
 	freed := int64(0)
+	scanned := 0
+	failed := 0
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return map[string]any{"removed": removed, "freed_bytes": freed, "error": err.Error()}
+		return map[string]any{
+			"removed": removed, "removed_count": 0, "scanned_dirs": 0,
+			"deleted_dirs": 0, "failed_dirs": 0, "freed_bytes": 0,
+			"freed_human": "0 B", "retention_days": retention, "error": err.Error(),
+		}
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() || active[entry.Name()] {
 			continue
 		}
+		scanned++
 		info, err := entry.Info()
 		if err != nil || info.ModTime().After(deadline) {
 			continue
 		}
 		dirPath := filepath.Join(root, entry.Name())
+		dirFreed := int64(0)
 		_ = filepath.Walk(dirPath, func(_ string, fi os.FileInfo, err error) error {
 			if err == nil && fi != nil && !fi.IsDir() {
-				freed += fi.Size()
+				dirFreed += fi.Size()
 			}
 			return nil
 		})
 		if err := os.RemoveAll(dirPath); err == nil {
 			removed = append(removed, entry.Name())
+			freed += dirFreed
+			removedDetails = append(removedDetails, map[string]any{
+				"name":       entry.Name(),
+				"age_days":   int(time.Since(info.ModTime()).Hours() / 24),
+				"size_bytes": dirFreed,
+				"size_human": utils.HumanBytes(dirFreed),
+			})
+		} else {
+			failed++
 		}
 	}
 	return map[string]any{
 		"removed":        removed,
 		"removed_count":  len(removed),
+		"scanned_dirs":   scanned,
+		"deleted_dirs":   len(removed),
+		"failed_dirs":    failed,
+		"deleted":        removedDetails,
 		"freed_bytes":    freed,
+		"freed_human":    utils.HumanBytes(freed),
 		"retention_days": retention,
 	}
 }

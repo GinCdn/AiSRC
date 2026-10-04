@@ -1267,6 +1267,37 @@ func (m *Manager) SkipTarget(taskID, targetID, reason string) map[string]any {
 	return runner.SkipTarget(targetID, reason)
 }
 
+// RescanTarget 重新扫描终态目标（done / skipped / dead → queued）。
+// 只改目标状态机，不动 finding（archived / review_pending 等统计口径不受影响）。
+func (m *Manager) RescanTarget(taskID, targetID string) map[string]any {
+	res := core.Db.Model(&model.Target{}).
+		Where("id = ? AND task_id = ? AND status IN ?", targetID, taskID,
+			[]string{constant.TargetDone, constant.TargetSkipped, constant.TargetDead}).
+		Updates(map[string]any{
+			"status":          constant.TargetQueued,
+			"verdict":         "",
+			"dead_reason":     "",
+			"last_error":      "",
+			"retry_count":     0,
+			"assigned_worker": "",
+			"heartbeat_at":    nil,
+		})
+	if res.Error != nil {
+		return map[string]any{"ok": false, "reason": res.Error.Error()}
+	}
+	if res.RowsAffected == 0 {
+		return map[string]any{"ok": false, "reason": "目标不存在或不在可重扫状态"}
+	}
+	var target model.Target
+	if err := core.Db.First(&target, "id = ? AND task_id = ?", targetID, taskID).Error; err == nil {
+		EmitInfo(taskID, "orchestrator", "target_requeued",
+			fmt.Sprintf("重新扫描：%s 已回队", displayTarget(&target)),
+			map[string]any{"target_id": targetID})
+	}
+	ensureRunnerForQueued(taskID)
+	return map[string]any{"ok": true}
+}
+
 // InjectDirective 跨任务注入指令。
 func (m *Manager) InjectDirective(taskID, targetID, directive string) map[string]any {
 	runner := m.GetRunner(taskID)
