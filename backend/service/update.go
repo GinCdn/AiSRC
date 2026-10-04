@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,10 +24,27 @@ import (
 )
 
 // updateHTTPClient 在线更新使用的 HTTP 客户端（检查版本）。
-var updateHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var updateHTTPClient = &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: updateProxy}}
 
-// downloadHTTPClient 下载安装包用的 HTTP 客户端（大文件，放宽超时）。
-var downloadHTTPClient = &http.Client{Timeout: 5 * time.Minute}
+// downloadHTTPClient 下载安装包用的 HTTP 客户端（大文件；国内直连 GitHub 较慢，放宽到 15 分钟）。
+var downloadHTTPClient = &http.Client{Timeout: 15 * time.Minute, Transport: &http.Transport{Proxy: updateProxy}}
+
+// updateProxy 依据 update.proxy 配置决定代理：请求时才读配置（此刻 config 已加载）。
+// 留空跟随系统环境变量；"direct"/"off"/"-" 强制直连（系统代理不可达 GitHub 时常用）；其余值视为代理 URL。
+func updateProxy(r *http.Request) (*url.URL, error) {
+	switch p := strings.TrimSpace(config.AppConfig.Update.Proxy); p {
+	case "":
+		return http.ProxyFromEnvironment(r)
+	case "direct", "off", "-":
+		return nil, nil
+	default:
+		u, err := url.Parse(p)
+		if err != nil {
+			return http.ProxyFromEnvironment(r)
+		}
+		return u, nil
+	}
+}
 
 // UpdateCheckResult 更新检查结果。
 type UpdateCheckResult struct {
@@ -76,16 +94,14 @@ func init() {
 	updateErrorText.Store("")
 }
 
-// setUpdateJob 写状态快照。
+// setUpdateJob 写状态快照（error 全量覆盖，避免残留上次失败信息）。
 func setUpdateJob(state, message, target, errText string) {
 	updateState.Store(state)
 	updateMessage.Store(message)
 	if target != "" {
 		updateTarget.Store(target)
 	}
-	if errText != "" {
-		updateErrorText.Store(errText)
-	}
+	updateErrorText.Store(errText)
 }
 
 // GetUpdateStatus 供状态接口读取。
@@ -286,13 +302,13 @@ func RunUpdate() map[string]any {
 				updateRunning.Store(false)
 			}
 		}()
-		performUpdate(ctx, assetURL, latest)
+		performUpdate(ctx, assetURL, assetName, latest)
 	}()
 	return map[string]any{"ok": true, "message": "正在下载并应用更新，服务将自动重启", "target_version": latest}
 }
 
 // performUpdate 下载 → 解压 → 替换 → 重启 的完整流程（后台 goroutine）。
-func performUpdate(ctx context.Context, assetURL, target string) {
+func performUpdate(ctx context.Context, assetURL, assetName, target string) {
 	exePath, err := os.Executable()
 	if err != nil {
 		setUpdateJob("failed", "", target, "定位安装目录失败："+err.Error())
@@ -309,11 +325,27 @@ func performUpdate(ctx context.Context, assetURL, target string) {
 		return
 	}
 
-	// 1. 下载
+	// 1. 下载（保留原始资产名，解包按扩展名识别格式；国内直连 GitHub 易瞬断，自动重试 3 次）
 	setUpdateJob("downloading", "正在下载更新包（"+target+"）…", target, "")
-	archivePath := filepath.Join(tmpDir, "update.asset")
-	if err := downloadFile(ctx, downloadHTTPClient, assetURL, archivePath); err != nil {
-		setUpdateJob("failed", "", target, "下载更新包失败："+err.Error())
+	archivePath := filepath.Join(tmpDir, assetName)
+	var dlErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			setUpdateJob("downloading", fmt.Sprintf("下载中断，正在重试（第 %d/3 次）…", attempt), target, "")
+			select {
+			case <-ctx.Done():
+				dlErr = ctx.Err()
+			case <-time.After(3 * time.Second):
+			}
+		}
+		dlErr = downloadFile(ctx, downloadHTTPClient, assetURL, archivePath, target)
+		if dlErr == nil {
+			break
+		}
+		_ = os.Remove(archivePath)
+	}
+	if dlErr != nil {
+		setUpdateJob("failed", "", target, "下载更新包失败："+dlErr.Error())
 		return
 	}
 
@@ -361,7 +393,8 @@ func performUpdate(ctx context.Context, assetURL, target string) {
 		return
 	}
 
-	// 6. 重启：优雅停机（钩子）→ 拉起新进程 → 老进程退出
+	// 6. 清理暂存区后重启：优雅停机（钩子）→ 拉起新进程 → 老进程退出
+	_ = os.RemoveAll(tmpDir)
 	setUpdateJob("restarting", "更新完成，正在重启服务…", target, "")
 	go restartProcess(curBin)
 }
@@ -479,8 +512,31 @@ func restartProcess(newBin string) {
 	os.Exit(0)
 }
 
-// downloadFile 流式下载到目标路径。
-func downloadFile(ctx context.Context, client *http.Client, url, dst string) error {
+// progressReader 包装下载流，周期性把进度写进更新状态。
+type progressReader struct {
+	r      io.Reader
+	total  int64
+	done   int64
+	target string
+	last   time.Time
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if time.Since(p.last) >= time.Second {
+		p.last = time.Now()
+		msg := fmt.Sprintf("正在下载更新包（%s）… %.1fMB", p.target, float64(p.done)/1048576)
+		if p.total > 0 {
+			msg += fmt.Sprintf(" / %.1fMB（%.0f%%）", float64(p.total)/1048576, float64(p.done)/float64(p.total)*100)
+		}
+		setUpdateJob("downloading", msg, p.target, "")
+	}
+	return n, err
+}
+
+// downloadFile 流式下载到目标路径（带进度上报）。
+func downloadFile(ctx context.Context, client *http.Client, url, dst, target string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -502,7 +558,8 @@ func downloadFile(ctx context.Context, client *http.Client, url, dst string) err
 		return err
 	}
 	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
+	pr := &progressReader{r: resp.Body, total: resp.ContentLength, target: target, last: time.Now()}
+	_, err = io.Copy(f, pr)
 	return err
 }
 

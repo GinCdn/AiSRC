@@ -109,6 +109,8 @@ type UpdateConfig struct {
 	Branch      string `yaml:"branch"`
 	ReleasesURL string `yaml:"releases_url"`
 	Token       string `yaml:"token"` // 私有仓库查询 Releases 需要令牌
+	// Proxy 访问 GitHub 的代理：留空跟随系统环境变量；"direct"/"off"/"-" 强制直连；其余值视为代理 URL。
+	Proxy string `yaml:"proxy"`
 }
 
 var AppConfig Config
