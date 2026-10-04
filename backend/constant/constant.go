@@ -6,7 +6,7 @@ const (
 	ContextKeyUserObj = "authedUserObj"
 
 	// Version 全局系统版本号。
-	Version = "1.0.0"
+	Version = "1.0.1"
 
 	// AppName 应用名。
 	AppName = "AiSRC"
