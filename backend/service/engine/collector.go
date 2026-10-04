@@ -299,8 +299,9 @@ func Refill(ctx context.Context, task *model.Task, pool *llm.Pool) (int, error) 
 			fmt.Sprintf("%s 检索完成：本次入队 %d 个目标", EngineDisplayName(engineName), collected),
 			map[string]any{"engine": engineName, "enqueued": collected})
 		// 测绘结果完整传递给大模型分析（全部行、全字段；失败仅警告不阻断）。
+		// 异步执行：分析内含冷却等待重试，不能阻塞补位循环。
 		if len(allRows) > 0 {
-			AnalyzeEngineResults(ctx, task, pool, engineName, task.FofaQuery, resultFields, allRows)
+			go AnalyzeEngineResults(ctx, task, pool, engineName, task.FofaQuery, resultFields, allRows)
 		}
 	}
 

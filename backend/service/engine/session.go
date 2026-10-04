@@ -38,6 +38,12 @@ type sessionState struct {
 	fallback  map[string]string
 	headers   map[string]string
 	dirty     bool
+
+	// 代理粘性态（worker 出口 IP，对齐原版 executor）：acquire 一次后整会话复用；
+	// usedProxies 记录已用废的代理不再分配（dropSessionProxy 时写入）。
+	proxyID     string
+	proxyURL    string
+	usedProxies map[string]bool
 }
 
 // newSessionState 创建会话态；targetURL 是该 Worker 的目标地址，作为 Cookie 默认作用域。
@@ -370,6 +376,17 @@ func doHTTP(ctx context.Context, session *sessionState, call httpCall) httpExcha
 		clone.Jar = session.jar
 		client = &clone
 	}
+	// 代理池（对齐原版：粘性出口 + 全部不可用直连兜底）。
+	if session != nil {
+		ensureSessionProxy(session)
+		if session.proxyURL != "" {
+			if tr := proxyTransport(session.proxyURL); tr != nil {
+				clone := *client
+				clone.Transport = tr
+				client = &clone
+			}
+		}
+	}
 	if !call.FollowRedirects {
 		clone := *client
 		clone.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -380,7 +397,15 @@ func doHTTP(ctx context.Context, session *sessionState, call httpCall) httpExcha
 
 	resp, err := client.Do(req)
 	if err != nil {
+		// 连不上代理才算代理故障：记失败并换出口；目标侧超时/证书错误不动出口。
+		if session != nil && session.proxyID != "" && isProxyTransportError(err) {
+			reportProxyResult(session.proxyID, false)
+			dropSessionProxy(session)
+		}
 		return httpExchange{Error: utils.SanitizeSecretText(err.Error()), Applied: applied}
+	}
+	if session != nil && session.proxyID != "" {
+		reportProxyResult(session.proxyID, true)
 	}
 	defer resp.Body.Close()
 

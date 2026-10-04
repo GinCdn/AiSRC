@@ -2206,10 +2206,10 @@ export default function BoardView() {
                 <span className="board-meta-k">目标</span>
                 <span
                   className="board-meta-v"
-                  title={str(task.fofa_query || (task.target_source === 'site' ? task.manual_targets?.[0] : '') || '')}
+                  title={str((task.target_source === 'site' ? task.manual_targets?.[0] || task.fofa_query : task.fofa_query) || '')}
                 >
                   {task.target_source === 'site'
-                    ? truncate(task.fofa_query || task.manual_targets?.[0] || '单站协作', 60)
+                    ? truncate(task.manual_targets?.[0] || task.fofa_query || '单站协作', 60)
                     : truncate(task.fofa_query || '手动清单', 60)}
                 </span>
               </div>

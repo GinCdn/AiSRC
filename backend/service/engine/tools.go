@@ -564,6 +564,18 @@ func handleRunShell(ctx context.Context, args map[string]any, session *WorkerSes
 	if session != nil && session.WorkDir != "" {
 		cmd.Dir = session.WorkDir
 	}
+	// 代理池：粘性出口注入 shell 环境（对齐原版 _shell_proxy_env；未启用时不注入）。
+	if session != nil {
+		ensureSessionProxy(session.Session())
+		if proxyConn := session.Session().proxyURL; proxyConn != "" {
+			cmd.Env = append(os.Environ(),
+				"HTTP_PROXY="+proxyConn,
+				"HTTPS_PROXY="+proxyConn,
+				"ALL_PROXY="+proxyConn,
+				"NO_PROXY=127.0.0.1,localhost",
+			)
+		}
+	}
 	output, err := cmd.CombinedOutput()
 	text := utils.Truncate(utils.SanitizeSecretText(string(output)), 8000)
 	if err != nil {
@@ -614,6 +626,7 @@ func SetVerboseEvents(enabled bool) { verboseEventsRuntime.Store(enabled) }
 func ApplyRuntimeFlags(settings *model.SystemSettings) {
 	SetShellEnabled(settings.Defaults.EffectiveShellEnabled())
 	verboseEventsRuntime.Store(settings.Defaults.EffectiveVerboseEvents())
+	applyProxySnapshot(settings)
 }
 
 // windowsBashPath 探测 bash（含 grep/sed/awk 等 Unix 工具，与提示词教给
